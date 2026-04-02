@@ -1,0 +1,12 @@
+entity: Post
+fields:
+  title:
+    type: string
+    required: true
+  body:
+    type: text
+edges:
+  author:
+    target: User
+    cardinality: one
+    required: true
