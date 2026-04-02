@@ -1,0 +1,19 @@
+entity: User
+fields:
+  name:
+    type: string
+    required: true
+  email:
+    type: string
+    unique: true
+  age:
+    type: int
+    nullable: true
+edges:
+  posts:
+    target: Post
+    cardinality: many
+    inverse: author
+indexes:
+  - fields: [email]
+    unique: true
