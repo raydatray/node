@@ -1,0 +1,8 @@
+entity: User
+fields:
+  name:
+    type: string
+edges:
+  posts:
+    target: Nonexistent
+    cardinality: many
