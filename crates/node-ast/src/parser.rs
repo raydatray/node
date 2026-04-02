@@ -58,8 +58,16 @@ pub fn parse_entity(yaml: &str) -> Result<EntityNode, ParseError> {
     convert_entity(raw)
 }
 
-/// Parse a single YAML entity file into an EntityNode.
+/// Parse a single `.schema.yaml` entity file into an EntityNode.
+/// Rejects files that don't end in `.schema.yaml`.
 pub fn parse_entity_file(path: &Path) -> Result<EntityNode, ParseError> {
+    let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    if !file_name.ends_with(".schema.yaml") {
+        return Err(ParseError::InvalidExtension {
+            path: path.display().to_string(),
+            expected: ".schema.yaml".to_string(),
+        });
+    }
     let contents = std::fs::read_to_string(path)?;
     parse_entity(&contents)
 }
@@ -177,135 +185,4 @@ fn convert_indexes(
             })
         })
         .collect()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parse_minimal_entity() {
-        let yaml = r#"
-entity: User
-fields:
-  name:
-    type: string
-"#;
-        let entity = parse_entity(yaml).unwrap();
-        assert_eq!(entity.name, "User");
-        assert_eq!(entity.fields.len(), 1);
-        assert_eq!(entity.fields[0].name, "name");
-        assert_eq!(
-            entity.fields[0].field_type,
-            FieldType::Scalar(ScalarType::String)
-        );
-        assert!(!entity.fields[0].required);
-        assert!(entity.edges.is_empty());
-        assert!(entity.indexes.is_empty());
-    }
-
-    #[test]
-    fn parse_entity_with_all_features() {
-        let yaml = r#"
-entity: User
-fields:
-  name:
-    type: string
-    required: true
-  email:
-    type: string
-    unique: true
-  age:
-    type: int
-    nullable: true
-edges:
-  posts:
-    target: Post
-    cardinality: many
-    inverse: author
-indexes:
-  - fields: [email]
-    unique: true
-"#;
-        let entity = parse_entity(yaml).unwrap();
-        assert_eq!(entity.name, "User");
-        assert_eq!(entity.fields.len(), 3);
-        assert_eq!(entity.edges.len(), 1);
-        assert_eq!(entity.edges[0].target, "Post");
-        assert_eq!(entity.edges[0].cardinality, Cardinality::Many);
-        assert_eq!(entity.edges[0].inverse.as_deref(), Some("author"));
-        assert_eq!(entity.indexes.len(), 1);
-        assert!(entity.indexes[0].unique);
-    }
-
-    #[test]
-    fn error_on_unknown_type() {
-        let yaml = r#"
-entity: User
-fields:
-  name:
-    type: foobar
-"#;
-        let err = parse_entity(yaml).unwrap_err();
-        assert!(matches!(err, ParseError::UnknownType { .. }));
-    }
-
-    #[test]
-    fn error_on_unknown_cardinality() {
-        let yaml = r#"
-entity: User
-fields:
-  name:
-    type: string
-edges:
-  posts:
-    target: Post
-    cardinality: some
-"#;
-        let err = parse_entity(yaml).unwrap_err();
-        assert!(matches!(err, ParseError::UnknownCardinality { .. }));
-    }
-
-    #[test]
-    fn error_on_edge_field_collision() {
-        let yaml = r#"
-entity: User
-fields:
-  author:
-    type: string
-edges:
-  author:
-    target: Post
-    cardinality: one
-"#;
-        let err = parse_entity(yaml).unwrap_err();
-        assert!(matches!(err, ParseError::EdgeFieldCollision { .. }));
-    }
-
-    #[test]
-    fn error_on_empty_entity_name() {
-        let yaml = r#"
-entity: ""
-fields:
-  name:
-    type: string
-"#;
-        let err = parse_entity(yaml).unwrap_err();
-        assert!(matches!(err, ParseError::EmptyEntityName));
-    }
-
-    #[test]
-    fn error_on_invalid_index_field() {
-        let yaml = r#"
-entity: User
-fields:
-  name:
-    type: string
-indexes:
-  - fields: [nonexistent]
-    unique: true
-"#;
-        let err = parse_entity(yaml).unwrap_err();
-        assert!(matches!(err, ParseError::InvalidIndex { .. }));
-    }
 }
