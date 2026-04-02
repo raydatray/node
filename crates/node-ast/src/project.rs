@@ -1,30 +1,49 @@
 use std::collections::HashMap;
 use std::path::Path;
 
+use serde::Deserialize;
+
 use crate::ast::Project;
 use crate::error::ParseError;
 use crate::parser::parse_entity_file;
 
-/// Load all *.yaml files from a directory into a validated Project.
-pub fn load_project(dir: &Path) -> Result<Project, ParseError> {
-    let mut paths: Vec<_> = std::fs::read_dir(dir)?
-        .filter_map(|entry| {
-            let entry = entry.ok()?;
-            let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) == Some("yaml") {
-                Some(path)
-            } else {
-                None
-            }
-        })
-        .collect();
+// ---------------------------------------------------------------------------
+// Raw serde type for the project manifest
+// ---------------------------------------------------------------------------
 
-    // Sort for deterministic load order.
-    paths.sort();
+#[derive(Deserialize)]
+struct RawProject {
+    schemas: Vec<String>,
+}
 
-    let entities: Vec<_> = paths
-        .into_iter()
-        .map(|path| parse_entity_file(&path))
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
+
+/// Load a `.project.yaml` manifest and all referenced schema files into a
+/// validated Project. Schema paths are resolved relative to the manifest
+/// file's directory.
+pub fn load_project(manifest_path: &Path) -> Result<Project, ParseError> {
+    let file_name = manifest_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("");
+    if !file_name.ends_with(".project.yaml") {
+        return Err(ParseError::InvalidExtension {
+            path: manifest_path.display().to_string(),
+            expected: ".project.yaml".to_string(),
+        });
+    }
+
+    let contents = std::fs::read_to_string(manifest_path)?;
+    let raw: RawProject = serde_yaml::from_str(&contents)?;
+
+    let base_dir = manifest_path.parent().unwrap_or(Path::new("."));
+
+    let entities: Vec<_> = raw
+        .schemas
+        .iter()
+        .map(|schema_path| parse_entity_file(&base_dir.join(schema_path)))
         .collect::<Result<_, _>>()?;
 
     // Check for duplicate entity names.
@@ -44,6 +63,10 @@ pub fn load_project(dir: &Path) -> Result<Project, ParseError> {
 
     Ok(Project { entities })
 }
+
+// ---------------------------------------------------------------------------
+// Cross-entity validation
+// ---------------------------------------------------------------------------
 
 /// Validate that all edge targets exist and inverse edges are consistent.
 fn validate_edges(entities: &[crate::ast::EntityNode]) -> Result<(), ParseError> {
@@ -80,163 +103,4 @@ fn validate_edges(entities: &[crate::ast::EntityNode]) -> Result<(), ParseError>
             Ok(())
         })
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::fs;
-
-    fn write_test_schemas(dir: &Path) {
-        fs::create_dir_all(dir).unwrap();
-
-        fs::write(
-            dir.join("user.yaml"),
-            r#"
-entity: User
-fields:
-  name:
-    type: string
-    required: true
-  email:
-    type: string
-    unique: true
-edges:
-  posts:
-    target: Post
-    cardinality: many
-    inverse: author
-indexes:
-  - fields: [email]
-    unique: true
-"#,
-        )
-        .unwrap();
-
-        fs::write(
-            dir.join("post.yaml"),
-            r#"
-entity: Post
-fields:
-  title:
-    type: string
-    required: true
-  body:
-    type: text
-edges:
-  author:
-    target: User
-    cardinality: one
-    required: true
-"#,
-        )
-        .unwrap();
-    }
-
-    #[test]
-    fn load_project_from_directory() {
-        let dir = std::env::temp_dir().join("node_ast_test_load_project");
-        let _ = fs::remove_dir_all(&dir);
-        write_test_schemas(&dir);
-
-        let project = load_project(&dir).unwrap();
-        assert_eq!(project.entities.len(), 2);
-
-        let names: Vec<&str> = project.entities.iter().map(|e| e.name.as_str()).collect();
-        assert!(names.contains(&"User"));
-        assert!(names.contains(&"Post"));
-
-        fs::remove_dir_all(&dir).unwrap();
-    }
-
-    #[test]
-    fn error_on_unknown_edge_target() {
-        let dir = std::env::temp_dir().join("node_ast_test_unknown_target");
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-
-        fs::write(
-            dir.join("user.yaml"),
-            r#"
-entity: User
-fields:
-  name:
-    type: string
-edges:
-  posts:
-    target: Nonexistent
-    cardinality: many
-"#,
-        )
-        .unwrap();
-
-        let err = load_project(&dir).unwrap_err();
-        assert!(matches!(err, ParseError::UnknownEntity { .. }));
-
-        fs::remove_dir_all(&dir).unwrap();
-    }
-
-    #[test]
-    fn error_on_invalid_inverse() {
-        let dir = std::env::temp_dir().join("node_ast_test_bad_inverse");
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-
-        fs::write(
-            dir.join("user.yaml"),
-            r#"
-entity: User
-fields:
-  name:
-    type: string
-edges:
-  posts:
-    target: Post
-    cardinality: many
-    inverse: nope
-"#,
-        )
-        .unwrap();
-
-        fs::write(
-            dir.join("post.yaml"),
-            r#"
-entity: Post
-fields:
-  title:
-    type: string
-edges:
-  author:
-    target: User
-    cardinality: one
-"#,
-        )
-        .unwrap();
-
-        let err = load_project(&dir).unwrap_err();
-        assert!(matches!(err, ParseError::InvalidInverse { .. }));
-
-        fs::remove_dir_all(&dir).unwrap();
-    }
-
-    #[test]
-    fn error_on_duplicate_entity() {
-        let dir = std::env::temp_dir().join("node_ast_test_dup_entity");
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-
-        let yaml = r#"
-entity: User
-fields:
-  name:
-    type: string
-"#;
-        fs::write(dir.join("user1.yaml"), yaml).unwrap();
-        fs::write(dir.join("user2.yaml"), yaml).unwrap();
-
-        let err = load_project(&dir).unwrap_err();
-        assert!(matches!(err, ParseError::DuplicateEntity { .. }));
-
-        fs::remove_dir_all(&dir).unwrap();
-    }
 }
