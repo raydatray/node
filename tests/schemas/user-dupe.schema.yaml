@@ -1,0 +1,5 @@
+entity: User
+fields:
+  username:
+    type: string
+    required: true

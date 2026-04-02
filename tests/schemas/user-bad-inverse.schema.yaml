@@ -1,0 +1,9 @@
+entity: User
+fields:
+  name:
+    type: string
+edges:
+  posts:
+    target: Post
+    cardinality: many
+    inverse: nope
