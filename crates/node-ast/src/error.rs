@@ -64,4 +64,7 @@ pub enum ParseError {
 
     #[error("Entity name is empty")]
     EmptyEntityName,
+
+    #[error("File '{path}' must have extension '{expected}'")]
+    InvalidExtension { path: String, expected: String },
 }
