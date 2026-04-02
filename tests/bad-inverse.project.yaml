@@ -1,0 +1,3 @@
+schemas:
+  - schemas/user-bad-inverse.schema.yaml
+  - schemas/post.schema.yaml
