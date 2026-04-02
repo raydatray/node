@@ -1,0 +1,3 @@
+schemas:
+  - schemas/user.schema.yaml
+  - schemas/post.schema.yaml
